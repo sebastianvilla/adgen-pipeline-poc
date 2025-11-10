@@ -1,0 +1,23 @@
+{
+    "id": "5745-sd585-981",
+    "products": [
+        {
+            "id": "cocacola_zero_cherry",
+            "regions": [ 
+                "en-US",
+                "es-ES",
+                "fr-FR",
+                "jp-JP"
+            ],
+            "audience": "18-30 year olds, urban, active lifestyle",
+            "message": "Stay sharp, stay cherry.",
+            "theme": "vibrant, energetic, youthful",
+            "aspect_ratios": ["1:1", "16:9", "9:16"],
+            "assets": {
+                "creative": "",
+                "has_logo": false,
+                "has_message": false
+            }
+        }
+    ]
+}

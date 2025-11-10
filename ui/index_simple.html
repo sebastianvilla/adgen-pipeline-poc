@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Creative Automation Pipeline</title>
+</head>
+<body>
+    <h1>Submit Campaign Brief</h1>
+    <form id="briefForm">
+        <label for="brief">Enter JSON Brief:</label><br>
+        <textarea id="brief" name="brief" rows="10" cols="50">
+            @@brief_template@@
+        </textarea><br><br>
+        <button type="button" onclick="submitBrief()">Submit</button>
+    </form>
+    <div id="response"></div>
+
+    <script>
+        async function submitBrief() {
+            const briefText = document.getElementById('brief').value;
+            try {
+                const response = await fetch('/process_brief', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: briefText
+                });
+                const data = await response.json();
+                document.getElementById('response').innerText = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('response').innerText = 'Error: ' + error;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{
+    "id": "5745-sd585-981",
+    "products": [
+        {
+            "id": "cocacola_zero_cherry",
+            "regions": [
+                "en-US", 
+                "es-ES",
+                "fr-FR", 
+                "ja-JP"
+            ],
+            "audience": "18-30 year olds, urban, active lifestyle",
+            "message": "Stay sharp, stay cherry.",
+            "theme": "vibrant, energetic, youthful",
+            "aspect_ratios": ["1:1", "9:16", "16:9"],
+            "assets": {
+                "creative": "",
+                "has_logo": false,
+                "has_message": false
+            }
+        }, 
+        {
+            "id": "sprite_lemon_lime",
+            "regions": [
+                "en-US", 
+                "es-ES",
+                "fr-FR", 
+                "ja-JP"
+            ],
+            "audience": "30–50 year olds, balanced, health-conscious professionals seeking clarity and refreshment",
+            "message": "Zest mode: on.",
+            "theme": "fresh, clean, invigorating",
+            "aspect_ratios": ["1:1", "9:16", "16:9"],
+            "assets": {
+                "creative": "base64_img_data_here",
+                "has_logo": false,
+                "has_message": false
+            }
+        }
+    ]
+}

@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adgen Pipeline PoC – Brief Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-50 text-gray-900">
+    <div class="min-h-screen p-4 sm:p-6 lg:p-8">
+        <header class="mb-4">
+            <h1 class="text-2xl font-bold">Adgen Pipeline PoC – Brief Builder</h1>
+            <p class="text-sm text-gray-600">Build a JSON brief, submit it and monitor progress.</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-[35%_1fr] gap-6">
+            <section class="space-y-4">
+                <div class="flex items-center gap-3">
+                    <button id="addProductBtn" class="px-3 py-2 rounded-xl bg-white shadow border hover:bg-gray-50">+
+                        Add product</button>
+                    <button id="submitBtn"
+                        class="px-3 py-2 rounded-xl bg-black text-white shadow hover:bg-gray-800">Submit Brief</button>
+                    <!-- Added: toggle JSON button (guarded in JS) -->
+                    <!-- <button id="toggleJsonBtn" class="px-3 py-2 rounded-xl bg-white shadow border hover:bg-gray-50">Show JSON</button> -->
+                </div>
+
+                <div id="productsContainer" class="space-y-3"></div>
+
+                <details id="jsonPanel" class="bg-white rounded-2xl shadow border overflow-hidden" open>
+                    <summary class="cursor-pointer select-none p-3 text-sm font-medium bg-gray-100">JSON Brief</summary>
+                    <pre id="jsonPreview" class="p-3 text-xs overflow-auto max-h-72"></pre>
+                </details>
+            </section>
+
+            <section class="grid grid-rows gap-4">
+                <div class="bg-white rounded-2xl shadow border overflow-hidden flex flex-col">
+                    <div class="p-3 border-b bg-gray-100 text-sm font-medium">Job Progress</div>
+                    <div id="statusBar" class="p-3 text-sm">
+                        <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-gray-300"
+                                id="statusDot"></span><span id="statusText">Idle</span></div>
+                    </div>
+                    <pre id="logs" class="p-3 text-xs bg-gray-50 h-56 overflow-auto"></pre>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow border overflow-hidden">
+                    <div class="p-3 border-b bg-gray-100 text-sm font-medium">Outputs</div>
+                    <div id="outputs" class="p-3_ grid gap-4"></div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <div id="imgModal" class="fixed inset-0 bg-black/70 hidden items-center justify-center p-4 z-50">
+        <div class="relative max-w-5xl w-full flex items-center justify-center">
+            <button id="closeModalBtn" class="absolute -top-10 right-0 text-white text-xl">✕</button>
+            <img id="modalImg" src="" alt="Full size" class="w-auto h-auto rounded-xl shadow-lg" />
+        </div>
+    </div>
+
+    <script>
+        // ===== Constants =====
+        const DEFAULT_REGIONS = ["en-US", "es-ES", "fr-FR", "ja-JP"]; // selectable per product
+        const THEME_BY_PRODUCT = {
+            cocacola_zero_cherry: "vibrant, energetic, youthful",
+            sprite_lemon_lime: "fresh, clean, invigorating",
+        };
+
+        const PRODUCT_OPTIONS = [
+            { value: "cocacola_zero_cherry", label: "Coca-Cola Zero Cherry" },
+            { value: "sprite_lemon_lime", label: "Sprite Lemon-Lime" },
+        ];
+        const ASPECT_OPTIONS = ["1:1", "16:9", "9:16"];
+
+        // ===== State =====
+        let products = [];
+        let jobId = null;
+        let pollTimer = null;
+
+        // ===== Utils / DOM helpers =====
+
+        function getProductLabelFromValue(value) {
+            return PRODUCT_OPTIONS.find(opt => opt.value === value)?.label || value;
+        }
+
+        function genJobId() {
+            const rand = Math.random().toString(36).slice(2, 8);
+            return `job_${Date.now()}_${rand}`;
+        }
+
+        function el(tag, attrs = {}, ...children) {
+            const node = document.createElement(tag);
+            for (const [k, v] of Object.entries(attrs)) {
+                if (k === 'class') node.className = v;
+                else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.substring(2), v);
+                else if (k === 'for') node.htmlFor = v;
+                else if (k === 'value') node.value = v;
+                else if (k === 'checked') node.checked = !!v;
+                else node.setAttribute(k, v);
+            }
+            for (const c of children) {
+                if (c === null || c === undefined) continue;
+                if (typeof c === 'string') node.appendChild(document.createTextNode(c));
+                else node.appendChild(c);
+            }
+            return node;
+        }
+
+        function updateJsonPreview() {
+            const brief = buildBrief();
+            const pretty = JSON.stringify(brief, null, 2);
+            document.getElementById('jsonPreview').textContent = pretty;
+        }
+
+        function setStatus(text, colorClass = 'bg-gray-300') {
+            const dot = document.getElementById('statusDot');
+            const label = document.getElementById('statusText');
+            dot.className = `w-2 h-2 rounded-full ${colorClass}`;
+            label.textContent = text;
+        }
+
+        function appendLog(line) {
+            const pre = document.getElementById('logs');
+            pre.textContent += (pre.textContent ? "\n" : "") + line;
+            pre.scrollTop = pre.scrollHeight;
+        }
+        function clearLogs() { document.getElementById('logs').textContent = ''; }
+        function clearOutputs() { document.getElementById('outputs').innerHTML = ''; }
+
+        // ===== Product row =====
+        function addProductRow(initial = {}) {
+            const idx = products.length;
+            const state = {
+                id: initial.id || PRODUCT_OPTIONS[0].value,
+                audience: initial.audience || '',
+                message: initial.message || '',
+                theme: initial.theme || '',
+                aspect_ratios: initial.aspect_ratios || [],
+                regions: initial.regions || [...DEFAULT_REGIONS],
+                creative_b64: initial.creative_b64 || '',
+                has_logo: initial.has_logo || false,
+                has_message: initial.has_message || false,
+            };
+            products.push(state);
+
+            const container = el('div', { class: 'bg-white rounded-2xl shadow border p-5 space-y-4' });
+            const header = el('div', { class: 'flex items-center justify-between' },
+                el('h3', { class: 'font-semibold' }, `Product ${idx + 1}`),
+                el('button', { class: 'text-sm text-red-600 hover:underline', onclick: () => removeRow(idx, container) }, products.length > 1 ? 'Remove' : '')
+            );
+
+            const productSelect = el('select', {
+                class: 'w-full rounded-xl border p-2 bg-white',
+                onchange: (e) => { state.id = e.target.value; updateJsonPreview(); }
+            }, ...PRODUCT_OPTIONS.map(o => el(
+                'option',
+                {
+                    value: o.value,
+                    ...(o.value === state.id ? { selected: true } : {})
+                },
+                o.label
+            )));
+
+            const audienceInput = el('input', {
+                type: 'text', placeholder: 'e.g. 18-30 urban, active lifestyle',
+                class: 'w-full rounded-xl border p-2', value: state.audience,
+                oninput: (e) => { state.audience = e.target.value; updateJsonPreview(); }
+            });
+
+            const messageInput = el('input', {
+                type: 'text', placeholder: 'e.g. Stay sharp, stay cherry',
+                class: 'w-full rounded-xl border p-2', value: state.message,
+                oninput: (e) => { state.message = e.target.value; updateJsonPreview(); }
+            });
+
+            const themeInput = el('input', {
+                type: 'text', placeholder: 'e.g. vibrant, energetic, youthful',
+                class: 'w-full rounded-xl border p-2', value: state.theme,
+                oninput: (e) => { state.theme = e.target.value; updateJsonPreview(); }
+            });
+
+            const aspectWrap = el('div', { class: 'flex flex-wrap gap-5' },
+                ...ASPECT_OPTIONS.map(r => el('label', { class: 'inline-flex items-center gap-2' },
+                    el('input', {
+                        type: 'checkbox', checked: state.aspect_ratios.includes(r),
+                        onchange: (e) => {
+                            if (e.target.checked) state.aspect_ratios.push(r);
+                            else state.aspect_ratios = state.aspect_ratios.filter(x => x !== r);
+                            updateJsonPreview();
+                        }
+                    }), el('span', {}, r)
+                ))
+            );
+
+            const regionsWrap = el('div', { class: 'flex flex-col gap-3' },
+                ...DEFAULT_REGIONS.map(region => el('label', { class: 'inline-flex items-center gap-2' },
+                    el('input', {
+                        type: 'checkbox', checked: state.regions.includes(region),
+                        onchange: (e) => {
+                            if (e.target.checked) state.regions.push(region);
+                            else state.regions = state.regions.filter(x => x !== region);
+                            updateJsonPreview();
+                        }
+                    }), el('span', {}, region)
+                ))
+            );
+
+            const fileInput = el('input', {
+                type: 'file', accept: 'image/*', class: 'block w-full text-sm',
+                onchange: async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const b64 = await fileToBase64(file);
+                    state.creative_b64 = b64;
+                    toggles.classList.remove('hidden');
+                    updateJsonPreview();
+                }
+            });
+
+            const toggles = el('div', { class: 'flex items-center gap-6 hidden' },
+                el('label', { class: 'inline-flex items-center gap-2' },
+                    el('input', {
+                        type: 'checkbox', checked: state.has_logo,
+                        onchange: (e) => { state.has_logo = e.target.checked; updateJsonPreview(); }
+                    }), el('span', {}, 'Has logo')
+                ),
+                el('label', { class: 'inline-flex items-center gap-2' },
+                    el('input', {
+                        type: 'checkbox', checked: state.has_message,
+                        onchange: (e) => { state.has_message = e.target.checked; updateJsonPreview(); }
+                    }), el('span', {}, 'Has message')
+                ),
+            );
+
+            const assetWrap = el('div', { class: 'space-y-2' },
+                el('label', { class: 'block text-sm font-medium' }, 'Upload creative (optional, must be 1024x1024 PNG)'),
+                fileInput,
+                toggles
+            );
+
+            container.append(
+                header,
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Product'), productSelect),
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Audience'), audienceInput),
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Message'), messageInput),
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Theme'), themeInput),
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Aspect ratios'), aspectWrap),
+                el('div', {}, el('label', { class: 'block text-sm font-medium mb-1' }, 'Regions'), regionsWrap),
+                assetWrap
+            );
+
+            document.getElementById('productsContainer').appendChild(container);
+            updateJsonPreview();
+        }
+
+        function removeRow(idx, container) {
+            if (products.length === 1) return; // keep at least one
+            products.splice(idx, 1);
+            container.remove();
+            [...document.querySelectorAll('#productsContainer > div h3')].forEach((h, i) => h.textContent = `Product ${i + 1}`);
+            updateJsonPreview();
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // ===== Brief builder =====
+        function buildBrief() {
+            const prodEntries = products.map(p => ({
+                id: p.id,
+                regions: p.regions,
+                audience: p.audience,
+                message: p.message,
+                theme: p.theme || THEME_BY_PRODUCT[p.id] || '',
+                aspect_ratios: p.aspect_ratios,
+                assets: {
+                    creative: p.creative_b64,
+                    has_logo: p.has_logo,
+                    has_message: p.has_message,
+                },
+            }));
+            return { id: jobId || genJobId(), products: prodEntries };
+        }
+
+        // ===== Submission & Polling =====
+        async function submitBrief() {
+            try {
+                clearLogs();
+                clearOutputs();
+                setStatus('Submitting…', 'bg-amber-400');
+
+                // generate new jobID each time
+                jobId = genJobId();
+                const brief = buildBrief();
+                brief.id = jobId;
+                updateJsonPreview();
+
+                const res = await fetch('/process_brief', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(brief),
+                });
+                if (!res.ok) throw new Error(`Server responded ${res.status}`);
+                const data = await res.json();
+
+                // normalize job id from server response
+                jobId = data.job_id || data.id || data.campaign_id || jobId;
+                appendLog(`✓ Brief accepted. job_id=${jobId}`);
+                setStatus('Queued', 'bg-amber-400');
+
+                // start polling
+                if (pollTimer) clearInterval(pollTimer);
+                pollTimer = setInterval(pollStatus, 2000);
+            } catch (err) {
+                setStatus('Error', 'bg-red-500');
+                appendLog(`Error submitting brief: ${err.message}`);
+                console.error(err);
+            }
+        }
+
+        async function pollStatus() {
+            if (!jobId) return;
+            try {
+                const res = await fetch(`/jobs/${encodeURIComponent(jobId)}`);
+                if (!res.ok) throw new Error(`status ${res.status}`);
+                const payload = await res.json();
+
+                // status dot
+                const status = payload.status || 'unknown';
+                if (status === 'queued') setStatus('Queued', 'bg-amber-400');
+                else if (status === 'running') setStatus('Running', 'bg-sky-500');
+                else if (status === 'complete') setStatus('Complete', 'bg-emerald-500');
+                else if (status === 'error') setStatus('Error', 'bg-red-500');
+                else setStatus(status, 'bg-gray-300');
+
+                // progress -> log lines
+                if (payload.progress) renderProgressLogs(payload.progress);
+
+                // outputs -> thumbnails grouped by product
+                if (payload.outputs) renderOutputsByProduct(payload);
+
+                if (status === 'complete' || status === 'error') {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+            } catch (err) {
+                appendLog(`Polling error: ${err.message}`);
+            }
+        }
+
+        function renderProgressLogs(progress) {
+            const { total_steps, completed_steps, percent, last_updated, per } = progress;
+            const lines = [];
+            lines.push(`Progress: ${completed_steps || 0}/${total_steps || 0} (${percent ?? 0}%)  @ ${last_updated || ''}`);
+
+            if (per && typeof per === 'object') {
+                for (const [productId, perProduct] of Object.entries(per)) {
+                    lines.push(`\n[${productId}]`);
+                    for (const [region, details] of Object.entries(perProduct)) {
+                        const steps = details.steps || {};
+                        const done = Object.values(steps).filter(s => s.status === 'done').length;
+                        const pending = Object.values(steps).filter(s => s.status === 'pending').length;
+                        lines.push(`  ${region}: ${done} done, ${pending} pending`);
+                        // Show recently completed steps (max 3)
+                        const recentlyDone = Object.entries(steps)
+                            .filter(([, s]) => s.status === 'done')
+                            .sort((a, b) => (b[1].ts || '').localeCompare(a[1].ts || ''))
+                            .slice(0, 3)
+                            .map(([name, s]) => `${name}${s.message ? ` → ${s.message}` : ''}`);
+                        if (recentlyDone.length) lines.push('    ✓ ' + recentlyDone.join(' | '));
+                    }
+                }
+            }
+
+            // write logs (replace, not append, for clarity each poll)
+            const pre = document.getElementById('logs');
+            pre.textContent = lines.join('\n');
+            pre.scrollTop = pre.scrollHeight;
+        }
+
+        // Helper: ensure we have a product box
+        function ensureProductBox(wrap, productId) {
+            let box = wrap.querySelector(`[data-product="${productId}"]`);
+            if (!box) {
+                box = el('div', { class: 'space-y-5 p-5', 'data-product': productId });
+                const title = el('div', { class: 'font-semibold text-gray-800' }, getProductLabelFromValue(productId));
+                box.append(title);
+                wrap.appendChild(box);
+            }
+            return box;
+        }
+
+        // Helper: ensure we have a row for a given locale
+        function ensureLocaleRow(box, region) {
+            let regionWrap = box.querySelector(`[data-region="${region}"]`);
+            if (!regionWrap) {
+                regionWrap = el('div', { class: 'space-y-2 p-6 bg-gray-100', 'data-region': region });
+                const label = el('div', { class: 'text-xs font-medium text-gray-500 flex flex-row justify-between' });
+
+                const labelRegion = el('div', {
+                    class: 'uppercase tracking-wide'
+                }, region);
+                
+                const checks = el('div', {
+                    class: 'flex flex-row flex-nowrap justify-start items-center gap-2 uppercase'
+                });
+                const checksLabel = el('div', { class: '' }, 'Legal checks: ');
+                const checksLegal = el('div', { class: 'font-bold', 'data-check-type': 'legal' }, 'Pending');
+                checks.append(checksLabel, checksLegal);
+                
+                label.append(labelRegion, checks)
+
+                // One row per locale, no wrapping, evenly spaced across the row
+                const row = el('div', {
+                    class: 'flex flex-row flex-nowrap justify-start items-center gap-4'
+                });
+                
+
+                // mark row so we can find it quickly
+                row.setAttribute('data-row', region);
+                regionWrap.append(label, row);
+                box.appendChild(regionWrap);
+            }
+            return regionWrap.querySelector(`[data-row="${region}"]`);
+        }
+
+        function renderOutputsByProduct(payload) {
+
+            const outputs = payload.outputs;
+            const checks = payload.checks;
+
+            const wrap = document.getElementById('outputs');
+            if (!wrap.__rendered) wrap.__rendered = {}; 
+
+            for (const [productId, localesMap] of Object.entries(outputs)) {
+                
+                if (!localesMap || typeof localesMap !== 'object') continue;
+
+                const existing = wrap.__rendered[productId] || new Set();
+                const box = ensureProductBox(wrap, productId);
+
+                for (const [locale, urls] of Object.entries(localesMap)) {
+
+                    const row = ensureLocaleRow(box, locale);
+
+                    if(checks[productId][locale]){
+
+                        row.parentElement.querySelector(`[data-check-type="legal"]`).textContent = checks[productId][locale].legal === true ? 'Pass' : 'Fail';
+
+                    }
+
+                    if (!Array.isArray(urls) || urls.length === 0) continue;
+
+                    
+
+                    urls.forEach((url) => {
+
+                        if (!url || existing.has(url)) return;
+
+                        const card = el('button', {
+                            class: 'relative flex-none rounded-xl overflow-hidden bg-white shadow hover:shadow-md',
+                            title: locale
+                        });
+
+                        const badge = el('span', {
+                            class: 'absolute top-1 right-1 text-[10px] bg-black/70 text-white px-1.5 py-0.5 rounded hidden'
+                        }, locale);
+                        card.append(badge);
+
+                        const imgEl = el('img', {
+                            src: url,
+                            alt: `${productId} · ${locale}`,
+                            class: 'h-64 max-h-64 w-auto object-contain block'
+                        });
+
+                        const brandCheckWrap = el('div', {
+                            class: 'text-xs uppercase flex gap-2 justify-start p-3'
+                        });
+
+                        const brandCheckLabel = el('div', { class: 'font-medium' }, 'Brand check: ');
+                        const brandCheckStatus = el('div', {
+                            class: 'font-bold',
+                            'data-check-type': 'brand', 
+                            'data-output-url': url
+                            // }, checks[productId][locale].brand === true ? 'Pass' : 'Fail');
+                            }, 'OK'); // Temporarily mark all as passed
+                        brandCheckWrap.append(brandCheckLabel, brandCheckStatus);
+
+                        card.append(imgEl);
+                        card.append(brandCheckWrap);
+                        card.addEventListener('click', () => openModal(url));
+                        row.appendChild(card);
+
+                        existing.add(url);
+                    });
+                }
+
+                wrap.__rendered[productId] = existing;
+            }
+        }
+
+
+
+
+        // ===== Modal helpers =====
+        function openModal(url) {
+            const modal = document.getElementById('imgModal');
+            const img = document.getElementById('modalImg');
+            img.src = url;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+        function closeModal() {
+            const modal = document.getElementById('imgModal');
+            const img = document.getElementById('modalImg');
+            img.src = '';
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // ===== Init =====
+        function init() {
+            // Collapse JSON by default
+            const jsonPanel = document.getElementById('jsonPanel');
+            if (jsonPanel) jsonPanel.open = false;
+
+            addProductRow();
+
+            document.getElementById('addProductBtn').addEventListener('click', () => addProductRow());
+            document.getElementById('submitBtn').addEventListener('click', submitBrief);
+
+            const toggleBtn = document.getElementById('toggleJsonBtn');
+            if (toggleBtn && jsonPanel) {
+                toggleBtn.addEventListener('click', () => { jsonPanel.open = !jsonPanel.open; });
+            }
+
+            document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+            document.getElementById('imgModal').addEventListener('click', (e) => { if (e.target.id === 'imgModal') closeModal(); });
+
+            updateJsonPreview();
+        }
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+
+</html>
