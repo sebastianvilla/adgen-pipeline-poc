@@ -250,6 +250,8 @@ class CampaignManager:
                 report["checks"][product][region]["legal"] = True
                 report["checks"][product][region]["brand"] = True
 
+                base_prompt_core = ""
+
                 if add_message:
 
                     # translate
@@ -371,11 +373,11 @@ class CampaignManager:
                             if not os.path.exists(mask_169): raise FileNotFoundError(f"Missing mask file: {mask_169}")
 
                             hero_169_full = generate_image(
-                                prompt="Replace the orange rectangle with a background consistent with the existing background, retain everything else, do not change the position of the can",
+                                prompt= f"Replace the orange rectangle with a background that blends with the rest of the imge, retain everything else, do not change the position of the can. {base_prompt_core}",
                                 product=product, region=region, output_dir=self.output_dir,
                                 output_name=f"{product}_{region}_hero_16-9.png",
                                 size="1536x1024", input_image_path=seed, 
-                                mask_image_path=mask_169
+                                # mask_image_path=mask_169
                             )
                             hero_169_cropped = hero_169_full
                             _crop_center_keep_size(hero_169_full, hero_169_cropped, final_w=None, final_h=864)
@@ -415,11 +417,12 @@ class CampaignManager:
                             mask_916 = os.path.join(ASSETS_DIR, "mask_9-16.png")
                             if not os.path.exists(mask_916): raise FileNotFoundError(f"Missing mask file: {mask_916}")
                             hero_916_full = generate_image(
-                                prompt="Replace the orange rectangle with a background consistent with the existing background, retain everything else, do not change the position of the can",
+                                # prompt="Replace the orange rectangle with a background consistent with the existing background, retain everything else, do not change the position of the can",
+                                prompt= f"Replace the orange rectangle with a background that blends with the rest of the imge, retain everything else, do not change the position of the can. {base_prompt_core}",
                                 product=product, region=region, output_dir=self.output_dir,
                                 output_name=f"{product}_{region}_hero_9-16.png",
                                 size="1024x1536", input_image_path=seed, 
-                                mask_image_path=mask_916
+                                # mask_image_path=mask_916
                             )
                             hero_916_cropped = hero_916_full
                             _crop_center_keep_size(hero_916_full, hero_916_cropped, final_w=864, final_h=None)
