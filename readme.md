@@ -31,29 +31,53 @@ Each worker can be replaced or scaled independently. The **CampaignManager** coo
 <summary>Click to expand workflow diagram</summary>
 
 ```mermaid
+
 graph TD
+
 A(API) --> B(Campaign Manager)
+
 B --> C([Needs localization?])
+
 C -- yes --> D(Translation)
+
 C -- no --> E(Legal Check)
+
 D --> E
+
 E -- pass --> F([has creative?])
+
 E -- fail --> Y[[Job failed]]
+
 F -- no --> G(Prompt Builder)
+
 F -- yes --> H([Needs A/R Variations?])
+
 G --> I(GenAI Base Image)
+
 I --> H
+
 H -- yes --> J(GenAI Variations)
+
 H -- no --> K([Needs logo?])
+
 K -- yes --> L(Layout/Composition Engine)
+
 K -- no --> N
+
 J --> L
-H -- no
+
+H -- no --> M([Needs message?])
+
 M -- yes --> L
+
 M -- no --> N(Brand check)
+
 L --> N
+
 N -- pass --> Z[[Job complete]]
+
 N -- fail --> Y
+
 ```
 </details>
 
